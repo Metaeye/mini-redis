@@ -54,9 +54,7 @@ impl Parser {
             //
             // 虽然错误存储为字符串，但它们被视为单独的类型。
             Frame::Simple(s) => Ok(s),
-            Frame::Bulk(bytes) => str::from_utf8(&bytes[..])
-                .map(|s| s.to_string())
-                .map_err(|_| "协议错误；无效字符串".into()),
+            Frame::Bulk(bytes) => String::from_utf8(bytes.to_vec()).map_err(|_| "协议错误；无效字符串".into()),
             frame => Err(format!("协议错误；预期简单帧或批量帧，得到 {:?}", frame).into()),
         }
     }
@@ -97,11 +95,9 @@ impl Parser {
 
     /// 确保数组中没有更多条目
     pub(crate) fn finish(&mut self) -> Result<(), ParserError> {
-        if self.parts.next().is_none() {
-            Ok(())
-        } else {
-            Err("协议错误；预期帧结束，但还有更多".into())
-        }
+        self.parts
+            .next()
+            .map_or(Ok(()), |_| Err("协议错误；预期帧结束，但还有更多".into()))
     }
 }
 
