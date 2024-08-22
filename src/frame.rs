@@ -19,7 +19,7 @@ pub enum Frame {
 }
 
 #[derive(Debug)]
-pub enum Error {
+pub enum FrameError {
     /// 没有足够的数据来解析消息
     Incomplete,
 
@@ -62,7 +62,7 @@ impl Frame {
     }
 
     /// 检查是否可以从 `src` 解码整个消息
-    pub fn check(src: &mut Cursor<&[u8]>) -> Result<(), Error> {
+    pub fn check(src: &mut Cursor<&[u8]>) -> Result<(), FrameError> {
         match get_u8(src)? {
             b'+' => {
                 get_line(src)?;
@@ -100,75 +100,58 @@ impl Frame {
             actual => Err(format!("protocol error; invalid frame type byte `{}`", actual).into()),
         }
     }
+}
 
+impl From<&mut Cursor<&[u8]>> for Frame {
     /// 消息已经通过 `check` 验证。
-    pub fn parse(src: &mut Cursor<&[u8]>) -> Result<Frame, Error> {
-        match get_u8(src)? {
+    fn from(src: &mut Cursor<&[u8]>) -> Frame {
+        match get_u8(src).unwrap() {
             b'+' => {
                 // 读取行并将其转换为 `Vec<u8>`
-                let line = get_line(src)?.to_vec();
-
+                let line = get_line(src).unwrap().to_vec();
                 // 将行转换为 String
-                let string = String::from_utf8(line)?;
+                let string = String::from_utf8(line).unwrap();
 
-                Ok(Frame::Simple(string))
+                Frame::Simple(string)
             }
             b'-' => {
                 // 读取行并将其转换为 `Vec<u8>`
-                let line = get_line(src)?.to_vec();
-
+                let line = get_line(src).unwrap().to_vec();
                 // 将行转换为 String
-                let string = String::from_utf8(line)?;
+                let string = String::from_utf8(line).unwrap();
 
-                Ok(Frame::Error(string))
+                Frame::Error(string)
             }
             b':' => {
-                let len = get_decimal(src)?;
-                Ok(Frame::Integer(len))
+                let len = get_decimal(src).unwrap();
+
+                Frame::Integer(len)
             }
             b'$' => {
-                if b'-' == peek_u8(src)? {
-                    let line = get_line(src)?;
+                if b'-' == peek_u8(src).unwrap() {
+                    let _ = get_line(src);
 
-                    if line != b"-1" {
-                        return Err("protocol error; invalid frame format".into());
-                    }
-
-                    Ok(Frame::Null)
+                    Frame::Null
                 } else {
                     // 读取 bulk 字符串
-                    let len = get_decimal(src)?.try_into()?;
-                    let n = len + 2;
-
-                    if src.remaining() < n {
-                        return Err(Error::Incomplete);
-                    }
-
+                    let len = get_decimal(src).unwrap().try_into().unwrap();
                     let bytes = Bytes::copy_from_slice(&src.chunk()[..len]);
 
                     // 跳过该数量的字节 + 2 (\r\n)。
-                    skip(src, n)?;
+                    skip(src, len + 2).unwrap();
 
-                    Ok(Frame::Bulk(bytes))
+                    Frame::Bulk(bytes)
                 }
             }
             b'*' => {
-                let len = get_decimal(src)?.try_into()?;
-                let mut vec = Vec::with_capacity(len);
+                let len = get_decimal(src).unwrap().try_into().unwrap();
+                // 必须顺序执行map, 不可以使用par_iter, 否则会导致顺序错乱
+                let vec = (0..len).map(|_| Frame::from(&mut *src)).collect();
 
-                for _ in 0..len {
-                    vec.push(Frame::parse(src)?);
-                }
-
-                Ok(Frame::Array(vec))
+                Frame::Array(vec)
             }
             _ => unimplemented!(),
         }
-    }
-
-    /// 将帧转换为“unexpected frame”错误
-    pub(crate) fn to_error(&self) -> crate::Error {
-        format!("unexpected frame: {}", self).into()
     }
 }
 
@@ -211,25 +194,67 @@ impl fmt::Display for Frame {
     }
 }
 
-fn peek_u8(src: &mut Cursor<&[u8]>) -> Result<u8, Error> {
+impl From<&Frame> for crate::Error {
+    /// 将帧转换为“unexpected frame”错误
+    fn from(frame: &Frame) -> Self {
+        format!("unexpected frame: {}", frame).into()
+    }
+}
+
+impl From<String> for FrameError {
+    fn from(src: String) -> FrameError {
+        FrameError::Other(src.into())
+    }
+}
+
+impl From<&str> for FrameError {
+    fn from(src: &str) -> FrameError {
+        src.to_string().into()
+    }
+}
+
+impl From<FromUtf8Error> for FrameError {
+    fn from(_src: FromUtf8Error) -> FrameError {
+        "protocol error; invalid frame format".into()
+    }
+}
+
+impl From<TryFromIntError> for FrameError {
+    fn from(_src: TryFromIntError) -> FrameError {
+        "protocol error; invalid frame format".into()
+    }
+}
+
+impl std::error::Error for FrameError {}
+
+impl fmt::Display for FrameError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            FrameError::Incomplete => "stream ended early".fmt(fmt),
+            FrameError::Other(err) => err.fmt(fmt),
+        }
+    }
+}
+
+fn peek_u8(src: &mut Cursor<&[u8]>) -> Result<u8, FrameError> {
     if !src.has_remaining() {
-        return Err(Error::Incomplete);
+        return Err(FrameError::Incomplete);
     }
 
     Ok(src.chunk()[0])
 }
 
-fn get_u8(src: &mut Cursor<&[u8]>) -> Result<u8, Error> {
+fn get_u8(src: &mut Cursor<&[u8]>) -> Result<u8, FrameError> {
     if !src.has_remaining() {
-        return Err(Error::Incomplete);
+        return Err(FrameError::Incomplete);
     }
 
     Ok(src.get_u8())
 }
 
-fn skip(src: &mut Cursor<&[u8]>, n: usize) -> Result<(), Error> {
+fn skip(src: &mut Cursor<&[u8]>, n: usize) -> Result<(), FrameError> {
     if src.remaining() < n {
-        return Err(Error::Incomplete);
+        return Err(FrameError::Incomplete);
     }
 
     src.advance(n);
@@ -237,7 +262,7 @@ fn skip(src: &mut Cursor<&[u8]>, n: usize) -> Result<(), Error> {
 }
 
 /// 读取一个以新行终止的十进制数
-fn get_decimal(src: &mut Cursor<&[u8]>) -> Result<u64, Error> {
+fn get_decimal(src: &mut Cursor<&[u8]>) -> Result<u64, FrameError> {
     use atoi::atoi;
 
     let line = get_line(src)?;
@@ -246,7 +271,7 @@ fn get_decimal(src: &mut Cursor<&[u8]>) -> Result<u64, Error> {
 }
 
 /// 查找一行
-fn get_line<'a>(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error> {
+fn get_line<'a>(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], FrameError> {
     // 直接扫描字节
     let start = src.position() as usize;
     // 扫描到倒数第二个字节
@@ -262,40 +287,5 @@ fn get_line<'a>(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error> {
         }
     }
 
-    Err(Error::Incomplete)
-}
-
-impl From<String> for Error {
-    fn from(src: String) -> Error {
-        Error::Other(src.into())
-    }
-}
-
-impl From<&str> for Error {
-    fn from(src: &str) -> Error {
-        src.to_string().into()
-    }
-}
-
-impl From<FromUtf8Error> for Error {
-    fn from(_src: FromUtf8Error) -> Error {
-        "protocol error; invalid frame format".into()
-    }
-}
-
-impl From<TryFromIntError> for Error {
-    fn from(_src: TryFromIntError) -> Error {
-        "protocol error; invalid frame format".into()
-    }
-}
-
-impl std::error::Error for Error {}
-
-impl fmt::Display for Error {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Error::Incomplete => "stream ended early".fmt(fmt),
-            Error::Other(err) => err.fmt(fmt),
-        }
-    }
+    Err(FrameError::Incomplete)
 }
