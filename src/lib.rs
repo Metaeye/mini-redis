@@ -13,6 +13,8 @@ pub use connection::Connection;
 mod shutdown;
 use shutdown::Shutdown;
 
+pub mod server;
+
 /// Redis 服务器监听的默认端口。
 ///
 /// 如果未指定端口，则使用此端口。
