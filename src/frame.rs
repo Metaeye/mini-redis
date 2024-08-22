@@ -95,6 +95,11 @@ impl Frame {
             actual => Err(format!("protocol error; invalid frame type byte `{}`", actual).into()),
         }
     }
+
+    /// 将帧转换为“unexpected frame”错误
+    pub(crate) fn to_error(&self) -> crate::Error {
+        format!("unexpected frame: {}", self).into()
+    }
 }
 
 impl From<&mut Cursor<&[u8]>> for Frame {
@@ -184,13 +189,6 @@ impl fmt::Display for Frame {
                 })
             }
         }
-    }
-}
-
-impl From<&Frame> for crate::Error {
-    /// 将帧转换为“unexpected frame”错误
-    fn from(frame: &Frame) -> Self {
-        format!("unexpected frame: {}", frame).into()
     }
 }
 

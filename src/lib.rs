@@ -4,17 +4,22 @@ pub use frame::{Frame, FrameError};
 mod parser;
 use parser::{Parser, ParserError};
 
-mod db;
-use db::{Db, DbDropGuard};
+pub mod cmd;
+pub use cmd::Command;
 
 mod connection;
 pub use connection::Connection;
 
-mod shutdown;
-use shutdown::Shutdown;
+mod db;
+use db::{Db, DbDropGuard};
+
+pub mod clients;
+pub use clients::{BlockingClient, BufferedClient, Client};
 
 pub mod server;
 
+mod shutdown;
+use shutdown::Shutdown;
 /// Redis 服务器监听的默认端口。
 ///
 /// 如果未指定端口，则使用此端口。
