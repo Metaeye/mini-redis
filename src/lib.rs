@@ -1,6 +1,9 @@
 mod frame;
 pub use frame::{Frame, FrameError};
 
+mod parser;
+use parser::{Parser, ParserError};
+
 mod connection;
 pub use connection::Connection;
 
