@@ -1,6 +1,9 @@
 mod frame;
 pub use frame::{Frame, FrameError};
 
+mod connection;
+pub use connection::Connection;
+
 /// Redis 服务器监听的默认端口。
 ///
 /// 如果未指定端口，则使用此端口。

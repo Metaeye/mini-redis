@@ -22,7 +22,6 @@ pub enum Frame {
 pub enum FrameError {
     /// 没有足够的数据来解析消息
     Incomplete,
-
     /// 无效的消息编码
     Other(crate::Error),
 }
@@ -91,11 +90,7 @@ impl Frame {
             b'*' => {
                 let len = get_decimal(src)?;
 
-                for _ in 0..len {
-                    Frame::check(src)?;
-                }
-
-                Ok(())
+                (0..len).try_for_each(|_| Frame::check(src))
             }
             actual => Err(format!("protocol error; invalid frame type byte `{}`", actual).into()),
         }
@@ -179,16 +174,14 @@ impl fmt::Display for Frame {
             },
             Frame::Null => "(nil)".fmt(fmt),
             Frame::Array(parts) => {
-                for (i, part) in parts.iter().enumerate() {
+                parts.iter().enumerate().try_for_each(|(i, part)| {
                     if i > 0 {
                         // 使用空格作为数组元素显示分隔符
                         write!(fmt, " ")?;
                     }
 
-                    part.fmt(fmt)?;
-                }
-
-                Ok(())
+                    part.fmt(fmt)
+                })
             }
         }
     }
@@ -277,15 +270,13 @@ fn get_line<'a>(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], FrameError> {
     // 扫描到倒数第二个字节
     let end = src.get_ref().len() - 1;
 
-    for i in start..end {
-        if src.get_ref()[i] == b'\r' && src.get_ref()[i + 1] == b'\n' {
+    (start..end)
+        .find(|&i| src.get_ref()[i] == b'\r' && src.get_ref()[i + 1] == b'\n')
+        .map(|i| {
             // 找到一行，更新位置到 \n 之后
             src.set_position((i + 2) as u64);
-
             // 返回该行
-            return Ok(&src.get_ref()[start..i]);
-        }
-    }
-
-    Err(FrameError::Incomplete)
+            &src.get_ref()[start..i]
+        })
+        .ok_or(FrameError::Incomplete)
 }
