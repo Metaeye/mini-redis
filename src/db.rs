@@ -69,8 +69,8 @@ struct Entry {
 
 impl DbDropGuard {
     /// 创建一个新的 `DbDropGuard`，包装一个 `Db` 实例。当此实例被丢弃时，`Db` 的清理任务将被关闭。
-    pub(crate) fn new() -> DbDropGuard {
-        DbDropGuard { db: Db::new() }
+    pub(crate) fn new() -> Self {
+        Self { db: Db::new() }
     }
 
     /// 获取共享数据库。在内部，这是一个 `Arc`，所以克隆只会增加引用计数。
