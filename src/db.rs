@@ -127,7 +127,6 @@ impl Db {
         let expires_at = expire.map(|duration| {
             // 键过期的 `Instant`。
             let when = Instant::now() + duration;
-
             // 仅当新插入的过期时间是下一个要驱逐的键时才通知工作任务。在这种情况下，需要唤醒工作任务以更新其状态。
             notify = state.next_expiration().map(|expiration| expiration > when).unwrap_or(true);
 
@@ -153,6 +152,20 @@ impl Db {
         if notify {
             // 最后，仅当后台任务需要更新其状态以反映新的过期时间时才通知它。
             self.shared.background_task.notify_one();
+        }
+    }
+
+    pub(crate) fn del(&self, keys: Vec<String>) {
+        let mut state = self.shared.state.lock().unwrap();
+        for key in keys {
+            // 删除键的条目。如果存在，则返回条目；否则返回 `None`。
+            let entry = state.entries.remove(&key);
+            // 如果条目存在并且有过期时间，则从 `expirations` 映射中删除它。
+            if let Some(entry) = entry {
+                if let Some(when) = entry.expires_at {
+                    state.expirations.remove(&(when, key));
+                }
+            }
         }
     }
 
@@ -225,7 +238,6 @@ impl Shared {
                 // 完成清除，`when` 是下一个键过期的时间点。工作任务将等待直到此时刻。
                 return Some(when);
             }
-
             // 键已过期，删除它
             state.entries.remove(key);
             state.expirations.remove(&(when, key.clone()));

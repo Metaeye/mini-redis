@@ -43,12 +43,13 @@ impl Connection {
     ///
     /// 成功时，返回接收到的帧。如果 `TcpStream` 以不破坏帧的方式关闭，则返回 `None`。
     /// 否则，返回错误。
-    pub async fn read_frame(&mut self) -> crate::Result<Option<Frame>> {
+    pub async fn read_frame(&mut self) -> crate::Result<MaybeFrame> {
         loop {
             // 尝试从缓冲数据中解析帧。如果已缓冲足够的数据，则返回帧。
-            if let Some(frame) = self.parse_frame()? {
+            if let Some(frame) = MaybeFrame::try_from(&mut *self)? {
                 return Ok(Some(frame));
             }
+
             // 缓冲的数据不足以读取帧。尝试从套接字读取更多数据。
             //
             // 成功时，返回字节数。`0` 表示“流结束”。
@@ -62,51 +63,6 @@ impl Connection {
             } else {
                 return Err("connection reset by peer".into());
             }
-        }
-    }
-
-    /// 尝试从缓冲区解析帧。如果缓冲区包含足够的数据，则返回帧并从缓冲区中移除数据。
-    /// 如果缓冲的数据不足，则返回 `Ok(None)`。如果缓冲的数据不是有效的帧，则返回 `Err`。
-    fn parse_frame(&mut self) -> crate::Result<Option<Frame>> {
-        use crate::frame::FrameError::Incomplete;
-
-        // Cursor 用于跟踪缓冲区中的“当前位置”。Cursor 还实现了 `bytes` crate 中的 `Buf`，
-        // 提供了许多处理字节的有用工具。
-        let mut buf = Cursor::new(&self.buffer[..]);
-        // 第一步是检查是否已缓冲足够的数据来解析单个帧。
-        // 这一步通常比进行完整的帧解析要快得多，并且允许我们跳过分配数据结构来保存帧数据，
-        // 除非我们知道已接收到完整的帧。
-        match Frame::check(&mut buf) {
-            Ok(_) => {
-                // `check` 函数将把光标推进到帧的末尾。
-                // 由于在调用 `Frame::check` 之前光标的位置设置为零，
-                // 我们通过检查光标位置来获取帧的长度。
-                let len = buf.position() as usize;
-                // 在将光标传递给 `Frame::parse` 之前，将位置重置为零。
-                buf.set_position(0);
-                // 从缓冲区解析帧。这会分配必要的结构来表示帧并返回帧值。
-                //
-                // 如果编码的帧表示无效，则返回错误。
-                // 这应该终止**当前**连接，但不应影响任何其他连接的客户端。
-                let frame = Frame::from(&mut buf);
-                // 丢弃读取缓冲区中已解析的数据。
-                //
-                // 当调用读取缓冲区上的 `advance` 时，所有数据都会被丢弃，直到 `len`。
-                // 具体细节由 `BytesMut` 处理。这通常通过移动内部光标来完成，但也可能通过重新分配和复制数据来完成。
-                self.buffer.advance(len);
-
-                // 将解析的帧返回给调用者。
-                Ok(Some(frame))
-            }
-            // 读取缓冲区中没有足够的数据来解析单个帧。
-            // 我们必须等待从套接字接收更多数据。
-            // 读取套接字将在此 `match` 语句之后进行。
-            //
-            // 我们不希望从这里返回 `Err`，因为这种“错误”是预期的运行时条件。
-            Err(Incomplete) => Ok(None),
-            // 解析帧时遇到错误。连接现在处于无效状态。
-            // 从这里返回 `Err` 将导致连接关闭。
-            Err(e) => Err(e.into()),
         }
     }
 
@@ -190,5 +146,56 @@ impl Connection {
         self.stream.write_all(b"\r\n").await?;
 
         Ok(())
+    }
+}
+
+type MaybeFrame = Option<Frame>;
+
+/// 尝试从缓冲区解析帧。如果缓冲区包含足够的数据，则返回帧并从缓冲区中移除数据。
+/// 如果缓冲的数据不足，则返回 `Ok(None)`。如果缓冲的数据不是有效的帧，则返回 `Err`。
+impl TryFrom<&mut Connection> for MaybeFrame {
+    type Error = crate::Error;
+
+    fn try_from(conn: &mut Connection) -> crate::Result<Self> {
+        use crate::frame::FrameError::Incomplete;
+
+        // Cursor 用于跟踪缓冲区中的“当前位置”。Cursor 还实现了 `bytes` crate 中的 `Buf`，
+        // 提供了许多处理字节的有用工具。
+        let mut buf = Cursor::new(&conn.buffer[..]);
+        // 第一步是检查是否已缓冲足够的数据来解析单个帧。
+        // 这一步通常比进行完整的帧解析要快得多，并且允许我们跳过分配数据结构来保存帧数据，
+        // 除非我们知道已接收到完整的帧。
+        match Frame::check(&mut buf) {
+            Ok(_) => {
+                // `check` 函数将把光标推进到帧的末尾。
+                // 由于在调用 `Frame::check` 之前光标的位置设置为零，
+                // 我们通过检查光标位置来获取帧的长度。
+                let len = buf.position() as usize;
+                // 在将光标传递给 `Frame::parse` 之前，将位置重置为零。
+                buf.set_position(0);
+                // 从缓冲区解析帧。这会分配必要的结构来表示帧并返回帧值。
+                //
+                // 如果编码的帧表示无效，则返回错误。
+                // 这应该终止**当前**连接，但不应影响任何其他连接的客户端。
+                let frame = Frame::from(&mut buf);
+                // 丢弃读取缓冲区中已解析的数据。
+                //
+                // 当调用读取缓冲区上的 `advance` 时，所有数据都会被丢弃，直到 `len`。
+                // 具体细节由 `BytesMut` 处理。这通常通过移动内部光标来完成，但也可能通过重新分配和复制数据来完成。
+                conn.buffer.advance(len);
+
+                // 将解析的帧返回给调用者。
+                Ok(Some(frame))
+            }
+            // 读取缓冲区中没有足够的数据来解析单个帧。
+            // 我们必须等待从套接字接收更多数据。
+            // 读取套接字将在此 `match` 语句之后进行。
+            //
+            // 我们不希望从这里返回 `Err`，因为这种“错误”是预期的运行时条件。
+            Err(Incomplete) => Ok(None),
+            // 解析帧时遇到错误。连接现在处于无效状态。
+            // 从这里返回 `Err` 将导致连接关闭。
+            Err(e) => Err(e.into()),
+        }
     }
 }

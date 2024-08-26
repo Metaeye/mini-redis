@@ -6,7 +6,7 @@ use std::{fmt, str, vec};
 /// 用于解析命令的工具
 ///
 /// 命令表示为数组帧。帧中的每个条目都是一个“令牌”。
-/// `Parse` 使用数组帧初始化，并提供类似光标的 API。
+/// `Parser` 使用数组帧初始化，并提供类似光标的 API。
 /// 每个命令结构体都包含一个 `parse_frame` 方法，该方法使用 `Parse` 来提取其字段。
 #[derive(Debug)]
 pub(crate) struct Parser {
@@ -26,7 +26,7 @@ pub(crate) enum ParserError {
 }
 
 impl Parser {
-    /// 创建一个新的 `Parse` 来解析 `frame` 的内容。
+    /// 创建一个新的 `Parser` 来解析 `frame` 的内容。
     ///
     /// 如果 `frame` 不是数组帧，则返回 `Err`。
     pub(crate) fn new(frame: Frame) -> Result<Self, ParserError> {

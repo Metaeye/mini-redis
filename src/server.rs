@@ -141,8 +141,8 @@ pub async fn run(listener: TcpListener, shutdown: impl Future) {
     // 显式丢弃 `shutdown_complete` 接收器和发送器
     // 显式丢弃 `shutdown_transmitter`。这很重要，因为下面的 `.await` 否则永远不会完成。
     let Server {
-        shutdown_complete_tx,
         notify_shutdown,
+        shutdown_complete_tx,
         ..
     } = server;
     // 当 `notify_shutdown` 被丢弃时，所有 `subscribe` 的任务将
@@ -183,16 +183,16 @@ impl Server {
             // `accept` 方法内部尝试恢复错误，因此此处的错误是不可恢复的。
             let socket = self.accept().await?;
             // 创建必要的每个连接处理程序状态。
-            let mut handler = Handler {
+            let mut handler = Handler::new(
                 // 获取共享数据库的句柄。
-                db: self.db_holder.db(),
+                self.db_holder.db(),
                 // 初始化连接状态。这会分配读/写缓冲区以执行 Redis 协议帧解析。
-                connection: Connection::new(socket),
+                Connection::new(socket),
                 // 接收关闭通知。
-                shutdown: Shutdown::new(self.notify_shutdown.subscribe()),
-                // 一旦所有克隆被丢弃，通知接收器一半。
-                _shutdown_complete: self.shutdown_complete_tx.clone(),
-            };
+                Shutdown::new(self.notify_shutdown.subscribe()),
+                // 一旦所有克隆被丢弃，通知接收器。
+                self.shutdown_complete_tx.clone(),
+            );
             // 生成一个新任务来处理连接。Tokio 任务类似于异步绿色线程，并发执行。
             tokio::spawn(async move {
                 // 处理连接。如果遇到错误，记录它。
@@ -243,6 +243,16 @@ impl Handler {
     /// https://redis.io/topics/pipelining
     ///
     /// 当收到关闭信号时，连接会处理直到达到安全状态，此时它会终止。
+
+    fn new(db: Db, connection: Connection, shutdown: Shutdown, _shutdown_complete: mpsc::Sender<()>) -> Self {
+        Self {
+            db,
+            connection,
+            shutdown,
+            _shutdown_complete,
+        }
+    }
+
     #[instrument(skip(self))]
     async fn run(&mut self) -> crate::Result<()> {
         // 只要未收到关闭信号，尝试读取新请求帧。
@@ -263,7 +273,7 @@ impl Handler {
                 None => return Ok(()),
             };
             // 将 Redis 帧转换为命令结构。如果帧不是有效的 Redis 命令或是不支持的命令，则返回错误。
-            let cmd = Command::from_frame(frame)?;
+            let cmd = Command::try_from(frame)?;
             // 记录 `cmd` 对象。这里的语法是 `tracing` crate 提供的简写。
             // 它可以被认为类似于：
             //
