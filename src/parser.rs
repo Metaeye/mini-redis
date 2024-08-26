@@ -102,13 +102,13 @@ impl Parser {
 }
 
 impl From<String> for ParserError {
-    fn from(src: String) -> ParserError {
-        ParserError::Other(src.into())
+    fn from(src: String) -> Self {
+        Self::Other(src.into())
     }
 }
 
 impl From<&str> for ParserError {
-    fn from(src: &str) -> ParserError {
+    fn from(src: &str) -> Self {
         src.to_string().into()
     }
 }
@@ -116,8 +116,8 @@ impl From<&str> for ParserError {
 impl fmt::Display for ParserError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParserError::EndOfStream => "协议错误；意外的流结束".fmt(f),
-            ParserError::Other(err) => err.fmt(f),
+            Self::EndOfStream => "协议错误；意外的流结束".fmt(f),
+            Self::Other(err) => err.fmt(f),
         }
     }
 }

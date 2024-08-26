@@ -28,8 +28,8 @@ pub enum FrameError {
 
 impl Frame {
     /// 返回一个空数组
-    pub(crate) fn array() -> Frame {
-        Frame::Array(vec![])
+    pub(crate) fn array() -> Self {
+        Self::Array(vec![])
     }
 
     /// 将一个“bulk”帧推入数组。`self` 必须是一个 Array 帧。
@@ -39,8 +39,8 @@ impl Frame {
     /// 如果 `self` 不是数组，则会 panic
     pub(crate) fn push_bulk(&mut self, bytes: Bytes) {
         match self {
-            Frame::Array(vec) => {
-                vec.push(Frame::Bulk(bytes));
+            Self::Array(vec) => {
+                vec.push(Self::Bulk(bytes));
             }
             _ => panic!("not an array frame"),
         }
@@ -53,8 +53,8 @@ impl Frame {
     /// 如果 `self` 不是数组，则会 panic
     pub(crate) fn push_int(&mut self, value: u64) {
         match self {
-            Frame::Array(vec) => {
-                vec.push(Frame::Integer(value));
+            Self::Array(vec) => {
+                vec.push(Self::Integer(value));
             }
             _ => panic!("not an array frame"),
         }
@@ -90,7 +90,7 @@ impl Frame {
             b'*' => {
                 let len = get_decimal(src)?;
 
-                (0..len).try_for_each(|_| Frame::check(src))
+                (0..len).try_for_each(|_| Self::check(src))
             }
             actual => Err(format!("protocol error; invalid frame type byte `{}`", actual).into()),
         }
@@ -104,7 +104,7 @@ impl Frame {
 
 impl From<&mut Cursor<&[u8]>> for Frame {
     /// 消息已经通过 `check` 验证。
-    fn from(src: &mut Cursor<&[u8]>) -> Frame {
+    fn from(src: &mut Cursor<&[u8]>) -> Self {
         match get_u8(src).unwrap() {
             b'+' => {
                 // 读取行并将其转换为 `Vec<u8>`
@@ -112,7 +112,7 @@ impl From<&mut Cursor<&[u8]>> for Frame {
                 // 将行转换为 String
                 let string = String::from_utf8(line).unwrap();
 
-                Frame::Simple(string)
+                Self::Simple(string)
             }
             b'-' => {
                 // 读取行并将其转换为 `Vec<u8>`
@@ -120,18 +120,18 @@ impl From<&mut Cursor<&[u8]>> for Frame {
                 // 将行转换为 String
                 let string = String::from_utf8(line).unwrap();
 
-                Frame::Error(string)
+                Self::Error(string)
             }
             b':' => {
                 let len = get_decimal(src).unwrap();
 
-                Frame::Integer(len)
+                Self::Integer(len)
             }
             b'$' => {
                 if b'-' == peek_u8(src).unwrap() {
                     let _ = get_line(src);
 
-                    Frame::Null
+                    Self::Null
                 } else {
                     // 读取 bulk 字符串
                     let len = get_decimal(src).unwrap().try_into().unwrap();
@@ -140,15 +140,15 @@ impl From<&mut Cursor<&[u8]>> for Frame {
                     // 跳过该数量的字节 + 2 (\r\n)。
                     skip(src, len + 2).unwrap();
 
-                    Frame::Bulk(bytes)
+                    Self::Bulk(bytes)
                 }
             }
             b'*' => {
                 let len = get_decimal(src).unwrap().try_into().unwrap();
                 // 必须顺序执行map, 不可以使用par_iter, 否则会导致顺序错乱
-                let vec = (0..len).map(|_| Frame::from(&mut *src)).collect();
+                let vec = (0..len).map(|_| Self::from(&mut *src)).collect();
 
-                Frame::Array(vec)
+                Self::Array(vec)
             }
             _ => unimplemented!(),
         }
@@ -158,8 +158,8 @@ impl From<&mut Cursor<&[u8]>> for Frame {
 impl PartialEq<&str> for Frame {
     fn eq(&self, other: &&str) -> bool {
         match self {
-            Frame::Simple(s) => s.eq(other),
-            Frame::Bulk(s) => s.eq(other),
+            Self::Simple(s) => s.eq(other),
+            Self::Bulk(s) => s.eq(other),
             _ => false,
         }
     }
@@ -170,15 +170,15 @@ impl fmt::Display for Frame {
         use std::str;
 
         match self {
-            Frame::Simple(response) => response.fmt(fmt),
-            Frame::Error(msg) => write!(fmt, "error: {}", msg),
-            Frame::Integer(num) => num.fmt(fmt),
-            Frame::Bulk(msg) => match str::from_utf8(msg) {
+            Self::Simple(response) => response.fmt(fmt),
+            Self::Error(msg) => write!(fmt, "error: {}", msg),
+            Self::Integer(num) => num.fmt(fmt),
+            Self::Bulk(msg) => match str::from_utf8(msg) {
                 Ok(string) => string.fmt(fmt),
                 Err(_) => write!(fmt, "{:?}", msg),
             },
-            Frame::Null => "(nil)".fmt(fmt),
-            Frame::Array(parts) => {
+            Self::Null => "(nil)".fmt(fmt),
+            Self::Array(parts) => {
                 parts.iter().enumerate().try_for_each(|(i, part)| {
                     if i > 0 {
                         // 使用空格作为数组元素显示分隔符
@@ -193,25 +193,25 @@ impl fmt::Display for Frame {
 }
 
 impl From<String> for FrameError {
-    fn from(src: String) -> FrameError {
-        FrameError::Other(src.into())
+    fn from(src: String) -> Self {
+        Self::Other(src.into())
     }
 }
 
 impl From<&str> for FrameError {
-    fn from(src: &str) -> FrameError {
+    fn from(src: &str) -> Self {
         src.to_string().into()
     }
 }
 
 impl From<FromUtf8Error> for FrameError {
-    fn from(_src: FromUtf8Error) -> FrameError {
+    fn from(_src: FromUtf8Error) -> Self {
         "protocol error; invalid frame format".into()
     }
 }
 
 impl From<TryFromIntError> for FrameError {
-    fn from(_src: TryFromIntError) -> FrameError {
+    fn from(_src: TryFromIntError) -> Self {
         "protocol error; invalid frame format".into()
     }
 }
@@ -221,8 +221,8 @@ impl std::error::Error for FrameError {}
 impl fmt::Display for FrameError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            FrameError::Incomplete => "stream ended early".fmt(fmt),
-            FrameError::Other(err) => err.fmt(fmt),
+            Self::Incomplete => "stream ended early".fmt(fmt),
+            Self::Other(err) => err.fmt(fmt),
         }
     }
 }

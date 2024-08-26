@@ -177,7 +177,6 @@ impl Db {
 
         // 获取互斥锁
         let mut state = self.shared.state.lock().unwrap();
-
         // 如果请求频道没有条目，则创建一个新的广播频道并将其与键关联。如果已经存在，则返回一个关联的接收器。
         match state.pub_sub.entry(key) {
             Entry::Occupied(e) => e.get().subscribe(),
@@ -278,6 +277,5 @@ async fn purge_expired_tasks(shared: Arc<Shared>) {
             shared.background_task.notified().await;
         }
     }
-
     debug!("清理后台任务已关闭")
 }
